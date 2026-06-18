@@ -786,6 +786,7 @@ textarea {
   margin: 0;
   color: var(--muted);
   line-height: 1.58;
+  white-space: pre-wrap;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 4;
@@ -862,6 +863,7 @@ textarea {
   margin: 9px 0 0;
   color: var(--muted);
   line-height: 1.62;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

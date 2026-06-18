@@ -907,6 +907,11 @@ export default function Home() {
                       <textarea
                         value={branchContent}
                         onChange={(event) => setBranchContent(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.stopPropagation();
+                          }
+                        }}
                         maxLength={260}
                         placeholder="더 좋은 방향, 다른 활용 장면, 걱정되는 점을 적어 주세요."
                       />

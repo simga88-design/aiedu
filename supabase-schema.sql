@@ -52,7 +52,7 @@ create policy "class ideas can be created"
     char_length(room_id) between 1 and 80
     and char_length(author) between 1 and 40
     and char_length(title) between 1 and 120
-    and char_length(content) between 1 and 600
+    and char_length(content) >= 1
   );
 
 create policy "class ideas can be updated"
@@ -62,7 +62,7 @@ create policy "class ideas can be updated"
   with check (
     char_length(author) between 1 and 40
     and char_length(title) between 1 and 120
-    and char_length(content) between 1 and 600
+    and char_length(content) >= 1
   );
 
 create policy "class events are readable"
@@ -76,7 +76,7 @@ create policy "class events can be created"
   with check (
     char_length(room_id) between 1 and 80
     and char_length(author) between 1 and 40
-    and char_length(content) between 1 and 700
+    and char_length(content) >= 1
   );
 
 do $$

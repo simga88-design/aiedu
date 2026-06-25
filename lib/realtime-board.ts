@@ -25,6 +25,25 @@ export type IdeaEvent = {
   createdAt: string;
 };
 
+export type IdeaLike = {
+  id: string;
+  ideaId: string;
+  roomId: string;
+  author: string;
+  clientId: string;
+  createdAt: string;
+};
+
+export type IdeaComment = {
+  id: string;
+  ideaId: string;
+  roomId: string;
+  author: string;
+  clientId: string;
+  content: string;
+  createdAt: string;
+};
+
 export type IdeaRow = {
   id: string;
   room_id: string;
@@ -43,6 +62,25 @@ export type IdeaEventRow = {
   room_id: string;
   author: string;
   action: IdeaAction;
+  content: string;
+  created_at: string;
+};
+
+export type IdeaLikeRow = {
+  id: string;
+  idea_id: string;
+  room_id: string;
+  author: string;
+  client_id: string;
+  created_at: string;
+};
+
+export type IdeaCommentRow = {
+  id: string;
+  idea_id: string;
+  room_id: string;
+  author: string;
+  client_id: string;
   content: string;
   created_at: string;
 };
@@ -85,6 +123,29 @@ export function rowToEvent(row: IdeaEventRow): IdeaEvent {
     roomId: row.room_id,
     author: row.author,
     action: row.action,
+    content: row.content,
+    createdAt: row.created_at
+  };
+}
+
+export function rowToLike(row: IdeaLikeRow): IdeaLike {
+  return {
+    id: row.id,
+    ideaId: row.idea_id,
+    roomId: row.room_id,
+    author: row.author,
+    clientId: row.client_id,
+    createdAt: row.created_at
+  };
+}
+
+export function rowToComment(row: IdeaCommentRow): IdeaComment {
+  return {
+    id: row.id,
+    ideaId: row.idea_id,
+    roomId: row.room_id,
+    author: row.author,
+    clientId: row.client_id,
     content: row.content,
     createdAt: row.created_at
   };

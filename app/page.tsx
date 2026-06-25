@@ -10,6 +10,7 @@ import {
   Copy,
   FileText,
   GitBranch,
+  Heart,
   History,
   Lightbulb,
   Loader2,
@@ -32,18 +33,24 @@ import {
   createSeedIdeas,
   Idea,
   IdeaAction,
+  IdeaComment,
+  IdeaCommentRow,
   IdeaEvent,
   IdeaEventRow,
+  IdeaLike,
+  IdeaLikeRow,
   IdeaRow,
   IdeaStage,
   roomId,
+  rowToComment,
   rowToEvent,
   rowToIdea,
+  rowToLike,
   supabase
 } from "../lib/realtime-board";
 
 type StageFilter = "all" | IdeaStage;
-type ToolMode = "build" | "ai" | "edit" | "history";
+type ToolMode = "build" | "comments" | "ai" | "edit" | "history";
 type PromptMode = "clarify" | "prototype" | "questions";
 type PromptCategory = "all" | "document" | "record" | "planning" | "guide" | "review" | "automation";
 type AppView = "mission" | "prompts" | "board" | "check";
@@ -427,6 +434,9 @@ const intentOptions: Array<{
 
 const localIdeaKey = `ai-class-ideas:${roomId}`;
 const localEventKey = `ai-class-events:${roomId}`;
+const localLikeKey = `ai-class-likes:${roomId}`;
+const localCommentKey = `ai-class-comments:${roomId}`;
+const localClientKey = `ai-class-client:${roomId}`;
 
 function sortIdeas(ideas: Idea[]) {
   return [...ideas].sort(
@@ -449,6 +459,18 @@ function formatTime(value: string) {
 
 function cleanName(value: string) {
   return value.trim() || "익명";
+}
+
+function getStoredClientId() {
+  const saved = window.localStorage.getItem(localClientKey);
+
+  if (saved) {
+    return saved;
+  }
+
+  const nextId = crypto.randomUUID();
+  window.localStorage.setItem(localClientKey, nextId);
+  return nextId;
 }
 
 function makeBranchTitle(parentTitle: string, content: string) {
@@ -509,6 +531,8 @@ function getPrompt(mode: PromptMode, idea: Idea | null) {
 export default function Home() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [events, setEvents] = useState<IdeaEvent[]>([]);
+  const [likes, setLikes] = useState<IdeaLike[]>([]);
+  const [comments, setComments] = useState<IdeaComment[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
@@ -519,6 +543,7 @@ export default function Home() {
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
   const [branchContent, setBranchContent] = useState("");
+  const [commentContent, setCommentContent] = useState("");
   const [editIdeaId, setEditIdeaId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
@@ -527,6 +552,7 @@ export default function Home() {
   const [promptCategory, setPromptCategory] = useState<PromptCategory>("all");
   const [openFollowUpTitle, setOpenFollowUpTitle] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<AppView>("board");
+  const [clientId] = useState(() => (typeof window === "undefined" ? "" : getStoredClientId()));
 
   const selectedIdea = useMemo(
     () => ideas.find((idea) => idea.id === selectedId) ?? ideas[0] ?? null,
@@ -549,6 +575,16 @@ export default function Home() {
     return sortEvents(events.filter((event) => event.ideaId === selectedIdea.id));
   }, [events, selectedIdea]);
 
+  const relatedComments = useMemo(() => {
+    if (!selectedIdea) {
+      return [];
+    }
+
+    return [...comments]
+      .filter((comment) => comment.ideaId === selectedIdea.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [comments, selectedIdea]);
+
   const branchCounts = useMemo(() => {
     return ideas.reduce<Record<string, number>>((counts, idea) => {
       if (idea.parentId) {
@@ -559,13 +595,32 @@ export default function Home() {
     }, {});
   }, [ideas]);
 
+  const likeCounts = useMemo(() => {
+    return likes.reduce<Record<string, number>>((counts, like) => {
+      counts[like.ideaId] = (counts[like.ideaId] ?? 0) + 1;
+      return counts;
+    }, {});
+  }, [likes]);
+
+  const commentCounts = useMemo(() => {
+    return comments.reduce<Record<string, number>>((counts, comment) => {
+      counts[comment.ideaId] = (counts[comment.ideaId] ?? 0) + 1;
+      return counts;
+    }, {});
+  }, [comments]);
+
+  const likedIdeaIds = useMemo(() => {
+    return new Set(likes.filter((like) => like.clientId === clientId).map((like) => like.ideaId));
+  }, [clientId, likes]);
+
   const stats = useMemo(
     () => ({
       ideas: ideas.length,
       building: ideas.filter((idea) => idea.stage === "building").length,
-      actions: events.length
+      comments: comments.length,
+      likes: likes.length
     }),
-    [events.length, ideas]
+    [comments.length, ideas, likes.length]
   );
 
   const aiPrompt = useMemo(() => getPrompt(promptMode, selectedIdea), [promptMode, selectedIdea]);
@@ -620,6 +675,13 @@ export default function Home() {
     setEvents(sortEvents(nextEvents));
   }, []);
 
+  const persistSocialLocal = useCallback((nextLikes: IdeaLike[], nextComments: IdeaComment[]) => {
+    window.localStorage.setItem(localLikeKey, JSON.stringify(nextLikes));
+    window.localStorage.setItem(localCommentKey, JSON.stringify(nextComments));
+    setLikes([...nextLikes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    setComments([...nextComments].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+  }, []);
+
   useEffect(() => {
     function syncViewFromHash() {
       const nextView = window.location.hash.replace("#", "");
@@ -639,19 +701,25 @@ export default function Home() {
     try {
       const savedIdeas = window.localStorage.getItem(localIdeaKey);
       const savedEvents = window.localStorage.getItem(localEventKey);
+      const savedLikes = window.localStorage.getItem(localLikeKey);
+      const savedComments = window.localStorage.getItem(localCommentKey);
       const nextIdeas = savedIdeas ? (JSON.parse(savedIdeas) as Idea[]) : createSeedIdeas();
       const nextEvents = savedEvents ? (JSON.parse(savedEvents) as IdeaEvent[]) : createSeedEvents();
+      const nextLikes = savedLikes ? (JSON.parse(savedLikes) as IdeaLike[]) : [];
+      const nextComments = savedComments ? (JSON.parse(savedComments) as IdeaComment[]) : [];
 
       persistLocal(nextIdeas, nextEvents);
+      persistSocialLocal(nextLikes, nextComments);
       setSelectedId((current) => current ?? nextIdeas[0]?.id ?? null);
     } catch {
       const seedIdeas = createSeedIdeas();
       const seedEvents = createSeedEvents();
 
       persistLocal(seedIdeas, seedEvents);
+      persistSocialLocal([], []);
       setSelectedId(seedIdeas[0]?.id ?? null);
     }
-  }, [persistLocal]);
+  }, [persistLocal, persistSocialLocal]);
 
   const refreshData = useCallback(
     async (quiet = false) => {
@@ -666,7 +734,7 @@ export default function Home() {
       }
 
       try {
-        const [ideasResult, eventsResult] = await Promise.all([
+        const [ideasResult, eventsResult, likesResult, commentsResult] = await Promise.all([
           supabase
             .from("class_ideas")
             .select("*")
@@ -674,6 +742,16 @@ export default function Home() {
             .order("updated_at", { ascending: false }),
           supabase
             .from("class_idea_events")
+            .select("*")
+            .eq("room_id", roomId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("class_idea_likes")
+            .select("*")
+            .eq("room_id", roomId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("class_idea_comments")
             .select("*")
             .eq("room_id", roomId)
             .order("created_at", { ascending: false })
@@ -687,11 +765,23 @@ export default function Home() {
           throw eventsResult.error;
         }
 
+        if (likesResult.error) {
+          throw likesResult.error;
+        }
+
+        if (commentsResult.error) {
+          throw commentsResult.error;
+        }
+
         const nextIdeas = (ideasResult.data as IdeaRow[]).map(rowToIdea);
         const nextEvents = (eventsResult.data as IdeaEventRow[]).map(rowToEvent);
+        const nextLikes = (likesResult.data as IdeaLikeRow[]).map(rowToLike);
+        const nextComments = (commentsResult.data as IdeaCommentRow[]).map(rowToComment);
 
         setIdeas(sortIdeas(nextIdeas));
         setEvents(sortEvents(nextEvents));
+        setLikes(nextLikes);
+        setComments(nextComments);
         setSelectedId((current) =>
           current && nextIdeas.some((idea) => idea.id === current)
             ? current
@@ -735,6 +825,30 @@ export default function Home() {
           event: "*",
           schema: "public",
           table: "class_idea_events",
+          filter: `room_id=eq.${roomId}`
+        },
+        () => {
+          void refreshData(true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "class_idea_likes",
+          filter: `room_id=eq.${roomId}`
+        },
+        () => {
+          void refreshData(true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "class_idea_comments",
           filter: `room_id=eq.${roomId}`
         },
         () => {
@@ -1006,6 +1120,119 @@ export default function Home() {
       setNotice("실험 완료로 표시했습니다.");
     } catch {
       setNotice("상태를 바꾸지 못했습니다.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleToggleLike(idea: Idea) {
+    const writer = cleanName(author);
+    const activeClientId = clientId || getStoredClientId();
+    const existingLike = likes.find(
+      (like) => like.ideaId === idea.id && like.clientId === activeClientId
+    );
+
+    setIsSaving(true);
+
+    try {
+      if (supabase) {
+        if (existingLike) {
+          const { error } = await supabase
+            .from("class_idea_likes")
+            .delete()
+            .eq("idea_id", idea.id)
+            .eq("client_id", activeClientId);
+
+          if (error) {
+            throw error;
+          }
+        } else {
+          const { error } = await supabase.from("class_idea_likes").insert({
+            idea_id: idea.id,
+            room_id: roomId,
+            author: writer,
+            client_id: activeClientId
+          });
+
+          if (error) {
+            throw error;
+          }
+        }
+
+        await refreshData(true);
+      } else if (existingLike) {
+        persistSocialLocal(
+          likes.filter((like) => like.id !== existingLike.id),
+          comments
+        );
+      } else {
+        const nextLike: IdeaLike = {
+          id: crypto.randomUUID(),
+          ideaId: idea.id,
+          roomId,
+          author: writer,
+          clientId: activeClientId,
+          createdAt: new Date().toISOString()
+        };
+
+        persistSocialLocal([nextLike, ...likes], comments);
+      }
+
+      setNotice(existingLike ? "좋아요를 취소했습니다." : "이 아이디어에 공감했습니다.");
+    } catch {
+      setNotice("좋아요를 반영하지 못했습니다. 연결 상태를 확인해 주세요.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleAddComment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedIdea || !commentContent.trim()) {
+      setNotice("댓글 내용을 적어 주세요.");
+      return;
+    }
+
+    const writer = cleanName(author);
+    const activeClientId = clientId || getStoredClientId();
+    const content = commentContent.trim();
+
+    setIsSaving(true);
+
+    try {
+      if (supabase) {
+        const { error } = await supabase.from("class_idea_comments").insert({
+          idea_id: selectedIdea.id,
+          room_id: roomId,
+          author: writer,
+          client_id: activeClientId,
+          content
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        await refreshData(true);
+      } else {
+        const nextComment: IdeaComment = {
+          id: crypto.randomUUID(),
+          ideaId: selectedIdea.id,
+          roomId,
+          author: writer,
+          clientId: activeClientId,
+          content,
+          createdAt: new Date().toISOString()
+        };
+
+        persistSocialLocal(likes, [nextComment, ...comments]);
+      }
+
+      setCommentContent("");
+      setNotice("댓글을 남겼습니다.");
+    } catch {
+      setNotice("댓글을 저장하지 못했습니다. 연결 상태를 확인해 주세요.");
     } finally {
       setIsSaving(false);
     }
@@ -1322,7 +1549,8 @@ export default function Home() {
               <div className="metric-strip" aria-label="보드 현황">
                 <span>{stats.ideas}개 아이디어</span>
                 <span>{stats.building}개 발전 중</span>
-                <span>{stats.actions}번 수정</span>
+                <span>{stats.likes}개 공감</span>
+                <span>{stats.comments}개 댓글</span>
               </div>
               <div className="segmented" aria-label="아이디어 상태 필터">
                 {stageOptions.map((option) => (
@@ -1368,17 +1596,40 @@ export default function Home() {
                     </div>
                     <h3>{idea.title}</h3>
                     <p>{idea.content}</p>
-                    <div className="card-footer">
-                      <span>
-                        <Users size={14} />
-                        {idea.author}
-                      </span>
-                      <span>
+                  </button>
+                  <div className="card-footer">
+                    <span className="author-chip">
+                      <Users size={14} />
+                      {idea.author}
+                    </span>
+                    <div className="reaction-row" aria-label="아이디어 반응">
+                      <button
+                        aria-pressed={likedIdeaIds.has(idea.id)}
+                        className={likedIdeaIds.has(idea.id) ? "reaction-button is-active" : "reaction-button"}
+                        disabled={isSaving}
+                        onClick={() => void handleToggleLike(idea)}
+                        type="button"
+                      >
+                        <Heart size={14} />
+                        {likeCounts[idea.id] ?? 0}
+                      </button>
+                      <button
+                        className="reaction-button"
+                        onClick={() => {
+                          setSelectedId(idea.id);
+                          setToolMode("comments");
+                        }}
+                        type="button"
+                      >
+                        <MessageSquareText size={14} />
+                        {commentCounts[idea.id] ?? 0}
+                      </button>
+                      <span className="reaction-pill">
                         <GitBranch size={14} />
                         {branchCounts[idea.id] ?? 0}
                       </span>
                     </div>
-                  </button>
+                  </div>
                 </article>
               ))}
             </div>
@@ -1416,6 +1667,26 @@ export default function Home() {
                     {formatTime(selectedIdea.updatedAt)}
                   </span>
                 </div>
+                <div className="focus-reactions" aria-label="선택한 아이디어 반응">
+                  <button
+                    aria-pressed={likedIdeaIds.has(selectedIdea.id)}
+                    className={likedIdeaIds.has(selectedIdea.id) ? "reaction-button is-active" : "reaction-button"}
+                    disabled={isSaving}
+                    onClick={() => void handleToggleLike(selectedIdea)}
+                    type="button"
+                  >
+                    <Heart size={15} />
+                    공감 {likeCounts[selectedIdea.id] ?? 0}
+                  </button>
+                  <button className="reaction-button" onClick={() => setToolMode("comments")} type="button">
+                    <MessageSquareText size={15} />
+                    댓글 {commentCounts[selectedIdea.id] ?? 0}
+                  </button>
+                  <span className="reaction-pill">
+                    <GitBranch size={15} />
+                    이어쓰기 {branchCounts[selectedIdea.id] ?? 0}
+                  </span>
+                </div>
               </div>
 
               <div className="tool-tabs" aria-label="아이디어 작업 선택">
@@ -1426,6 +1697,14 @@ export default function Home() {
                 >
                   <GitBranch size={16} />
                   이어쓰기
+                </button>
+                <button
+                  className={toolMode === "comments" ? "is-active" : ""}
+                  onClick={() => setToolMode("comments")}
+                  type="button"
+                >
+                  <MessageSquareText size={16} />
+                  댓글
                 </button>
                 <button
                   className={toolMode === "ai" ? "is-active" : ""}
@@ -1474,6 +1753,46 @@ export default function Home() {
                       이어쓰기
                     </button>
                   </form>
+                ) : null}
+
+                {toolMode === "comments" ? (
+                  <div className="comment-tool">
+                    <form className="comment-form" onSubmit={handleAddComment}>
+                      <label>
+                        <span>댓글 남기기</span>
+                        <textarea
+                          value={commentContent}
+                          onChange={(event) => setCommentContent(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                              event.currentTarget.form?.requestSubmit();
+                            }
+                          }}
+                          placeholder="공감한 점, 질문, 보완하면 좋을 점을 짧게 남겨 주세요."
+                        />
+                      </label>
+                      <button className="primary-button" disabled={isSaving} type="submit">
+                        <MessageSquareText size={18} />
+                        댓글 달기
+                      </button>
+                    </form>
+
+                    <div className="comment-list" aria-label="댓글 목록">
+                      {relatedComments.length ? (
+                        relatedComments.map((comment) => (
+                          <article className="comment-item" key={comment.id}>
+                            <div>
+                              <strong>{comment.author}</strong>
+                              <time>{formatTime(comment.createdAt)}</time>
+                            </div>
+                            <p>{comment.content}</p>
+                          </article>
+                        ))
+                      ) : (
+                        <p className="quiet-text">아직 댓글이 없습니다. 첫 반응을 남겨 주세요.</p>
+                      )}
+                    </div>
+                  </div>
                 ) : null}
 
                 {toolMode === "ai" ? (

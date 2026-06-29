@@ -2063,10 +2063,15 @@ export default function Home() {
 
               <div className="tool-body">
                 {toolMode === "build" ? (
-                  <form className="stack-form" onSubmit={handleBranchIdea}>
+                  <form className="stack-form branch-composer" onSubmit={handleBranchIdea}>
                     <label>
+                      <span className="composer-label">
+                        <MessageSquareText size={15} />
+                        댓글처럼 이어 남기기
+                      </span>
                       <span>이 생각에 이어서</span>
                       <textarea
+                        aria-label="댓글처럼 이어 남기기"
                         value={branchContent}
                         onChange={(event) => setBranchContent(event.target.value)}
                         onKeyDown={(event) => {
@@ -2077,6 +2082,9 @@ export default function Home() {
                         placeholder="더 좋은 방향, 다른 활용 장면, 걱정되는 점을 적어 주세요."
                       />
                     </label>
+                    <div className="composer-footer">
+                      <span>Enter로 줄바꿈 · 자유롭게 이어쓰기</span>
+                    </div>
                     <button className="primary-button" disabled={isSaving} type="submit">
                       <GitBranch size={18} />
                       이어쓰기
